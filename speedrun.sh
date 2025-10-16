@@ -10,6 +10,39 @@
 # 3) Example launch with wandb logging, but see below for setting up wandb first:
 # WANDB_RUN=speedrun screen -L -Logfile speedrun.log -S speedrun bash speedrun.sh
 
+# Optional first argument sets GPU count. Values <=1 run the single-process flow (current default),
+# values >1 switch to torchrun with the given GPU count.
+GPU_COUNT=${1:-1}
+if ! [[ "$GPU_COUNT" =~ ^[0-9]+$ ]]; then
+    echo "Invalid GPU count: $GPU_COUNT" >&2
+    echo "Usage: $0 [gpu_count]" >&2
+    exit 1
+fi
+
+if [ "$GPU_COUNT" -gt 1 ]; then
+    echo "Running in multi-GPU mode with $GPU_COUNT GPUs."
+    USE_TORCHRUN=1
+    RUNNER=(torchrun --standalone --nproc_per_node="$GPU_COUNT" -m)
+else
+    echo "Running in single-process mode."
+    USE_TORCHRUN=0
+    RUNNER=(python -m)
+fi
+
+run_module() {
+    local module="$1"
+    shift
+    if [ "$USE_TORCHRUN" -eq 1 ]; then
+        if [ "$#" -gt 0 ]; then
+            "${RUNNER[@]}" "$module" -- "$@"
+        else
+            "${RUNNER[@]}" "$module"
+        fi
+    else
+        "${RUNNER[@]}" "$module" "$@"
+    fi
+}
+
 # Default intermediate artifacts directory is in ~/.cache/nanochat
 export OMP_NUM_THREADS=1
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
@@ -92,25 +125,25 @@ echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # pretrain the d20 model
-python scripts.base_train.py --depth=20 --run=$WANDB_RUN
+run_module scripts.base_train --depth=20 --run=$WANDB_RUN
 # evaluate the model on a larger chunk of train/val data and draw some samples
-python scripts.base_loss.py
+run_module scripts.base_loss
 # evaluate the model on CORE tasks
-python scripts.base_eval.py
+run_module scripts.base_eval
 
 # -----------------------------------------------------------------------------
 # Midtraining (teach the model conversation special tokens, tool use, multiple choice)
 
 # run midtraining and eval the model
-python scripts.mid_train.py --run=$WANDB_RUN
-python scripts.chat_eval.py -i mid
+run_module scripts.mid_train --run=$WANDB_RUN
+run_module scripts.chat_eval -i mid
 
 # -----------------------------------------------------------------------------
 # Supervised Finetuning (domain adaptation to each sequence all by itself per row)
 
 # train sft and re-eval right away (should see a small bump)
-python scripts.chat_sft.py --run=$WANDB_RUN
-python scripts.chat_eval.py -i sft
+run_module scripts.chat_sft --run=$WANDB_RUN
+run_module scripts.chat_eval -i sft
 
 # chat with the model over CLI! Leave out the -p to chat interactively
 # python -m scripts.chat_cli -p "Why is the sky blue?"
