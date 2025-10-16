@@ -31,7 +31,7 @@ volume = modal.Volume.from_name(volume_nanochat_base_dir, create_if_missing=True
 n_nodes = 1
 @app.function(
     image=image,
-    gpu="H100:8",
+    gpu="H100",
     volumes={path_nanochat_base_dir: volume},
     timeout=6 * 60 * 60,  # set 6 hours timeout since modal may take long time to request gpus
 )
